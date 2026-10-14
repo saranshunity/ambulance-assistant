@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ambulance Assistant</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1c1c1e; }
+  .app { max-width: 960px; margin: 0 auto; padding: 16px; display: grid;
+         grid-template-columns: 1fr 280px; gap: 16px; height: 100vh; }
+  @media (max-width: 720px) { .app { grid-template-columns: 1fr; height: auto; } }
+  .panel { background: #fff; border-radius: 12px; padding: 16px;
+           box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .chat { display: flex; flex-direction: column; min-height: 0; }
+  #messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column;
+              gap: 8px; padding-bottom: 8px; min-height: 300px; }
+  .msg { padding: 10px 12px; border-radius: 12px; max-width: 85%;
+         white-space: pre-wrap; line-height: 1.4; }
+  .user { background: #d93025; color: #fff; align-self: flex-end; }
+  .bot { background: #eceff1; align-self: flex-start; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; padding: 10px 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; }
+  button { padding: 10px 16px; border: 0; border-radius: 8px; background: #d93025;
+           color: #fff; font-size: 16px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  h3 { margin: 0 0 12px; font-size: 16px; }
+  dl { margin: 0; }
+  dt { font-size: 12px; color: #666; margin-top: 10px; }
+  dd { margin: 2px 0 0; font-weight: 600; }
+  .empty { color: #aaa; font-weight: 400; }
+  .emergency { color: #d93025; }
+  .note { font-size: 12px; color: #888; margin-top: 16px; }
+  .attach { margin-top: 10px; font-size: 13px; color: #555; }
+    .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; font-size: 13px; }
+  #mic { background: #444; }
+  .fb { margin-top: 6px; font-size: 12px; color: #666; }
+  .fb button { background: none; color: inherit; border: 1px solid #ccc; padding: 2px 8px; margin-right: 6px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="panel chat">
+    <h3>Ambulance Assistant (demo)</h3>
+    <div id="messages"></div>
+        <div class="controls">
+      <select id="lang">
+        <option value="hi-IN">हिन्दी</option>
+        <option value="en-IN">English</option>
+      </select>
+      <label><input type="checkbox" id="speak"> Read replies aloud</label>
+    </div>
+        <form id="form">
+      <input id="input" placeholder="Type or tap the mic..." autocomplete="off">
+      <button type="button" id="mic" title="Speak">🎤</button>
+      <button id="send">Send</button>
+    </form>
+     <div class="attach">
+      <label>Attach referral PDF (demo files only)
+        <input type="file" id="pdf" accept="application/pdf">
+      </label>
+      <div id="referral"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Booking details</h3>
+    <dl id="details"></dl>
+    <p class="note">Demo only. In a real emergency, call 112.</p>
+  </div>
+</div>
+<script>
+const AGENT_URL = new URLSearchParams(location.search).get("v") === "2" ? "/agent2" : "/agent";
+const sessionId = crypto.randomUUID();
+const messages = document.getElementById("messages");
+const form = document.getElementById("form");
+const input = document.getElementById("input");
+const send = document.getElementById("send");
+const details = document.getElementById("details");
+
+const FIELDS = [
+  ["patient_name", "Patient name"], ["phone", "Phone"],
+  ["pickup_location", "Pickup location"], ["hospital", "Hospital"],
+  ["ambulance_type", "Ambulance type"], ["is_emergency", "Emergency"],
+];
+
+function addFeedback(botDiv, traceId) {
+  const bar = document.createElement("div");
+  bar.className = "fb";
+  for (const [label, value] of [["👍", 1], ["👎", 0]]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.onclick = async () => {
+      await fetch("/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trace_id: traceId, value }),
+      }).catch(() => {});
+      bar.textContent = "Thanks for the feedback";
+    };
+    bar.appendChild(b);
+  }
+  botDiv.appendChild(bar);
+}
+
+function addMessage(text, who) {
+  const div = document.createElement("div");
+  div.className = "msg " + who;
+  div.textContent = text;
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+  return div;
+}
+
+function renderDetails(slots) {
+  details.innerHTML = "";
+  for (const [key, label] of FIELDS) {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    const value = slots[key];
+    if (key === "is_emergency") {
+      dd.textContent = value ? "YES" : "No";
+      if (value) dd.className = "emergency";
+    } else if (value) {
+      dd.textContent = value;
+    } else {
+      dd.textContent = "—";
+      dd.className = "empty";
+    }
+    details.append(dt, dd);
+  }
+}
+renderDetails({});
+
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error("Server error " + res.status);
+  return res;
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  send.disabled = true;
+  addMessage(text, "user");
+  const bot = addMessage("…", "bot");
+
+  // The hand-written agent still uses /extract; the LangGraph one returns its own details
+  const useGraph = AGENT_URL === "/agent2";
+  const slotsPromise = useGraph
+    ? Promise.resolve(null)
+    : postJSON("/extract", { session_id: sessionId, message: text })
+        .then((r) => r.json())
+        .catch(() => null);
+
+  try {
+    const res = await postJSON(AGENT_URL, { session_id: sessionId, message: text });
+    const data = await res.json();
+    bot.textContent = data.reply;
+    if (data.trace_id) addFeedback(bot, data.trace_id);
+    if (data.slots) renderDetails(data.slots);
+    speak(data.reply);
+  } catch (err) {
+    bot.textContent = "Error: " + err.message;
+  }
+
+  const slots = await slotsPromise;
+  if (slots) renderDetails(slots);
+  send.disabled = false;
+  input.focus();
+});
+const pdfInput = document.getElementById("pdf");
+const referralBox = document.getElementById("referral");
+
+pdfInput.addEventListener("change", async () => {
+  const file = pdfInput.files[0];
+  if (!file) return;
+  referralBox.textContent = "Reading document...";
+  const body = new FormData();
+  body.append("file", file);
+  try {
+    const res = await fetch("/referral", { method: "POST", body });
+    if (!res.ok) throw new Error((await res.json()).detail || "Upload failed");
+    showReferral(await res.json());
+  } catch (err) {
+    referralBox.textContent = "Error: " + err.message;
+  }
+  pdfInput.value = "";
+});
+
+function yesNo(v) { return v == null ? null : (v ? "Yes" : "No"); }
+
+function showReferral(info) {
+  referralBox.innerHTML = "";
+  const rows = [
+    ["Patient", info.patient_name], ["From", info.referring_hospital],
+    ["To", info.destination_hospital], ["Reason", info.reason_for_transfer],
+    ["Oxygen needed", yesNo(info.needs_oxygen)],
+    ["ICU support needed", yesNo(info.needs_icu_support)],
+  ];
+  for (const [label, value] of rows) {
+    const p = document.createElement("div");
+    p.textContent = label + ": " + (value || "—");
+    referralBox.appendChild(p);
+  }
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "Use these details";
+  btn.onclick = () => {
+    const parts = [];
+    if (info.patient_name) parts.push("patient name " + info.patient_name);
+    if (info.destination_hospital) parts.push("destination hospital " + info.destination_hospital);
+    if (info.needs_icu_support) parts.push("ICU ambulance");
+    else if (info.needs_oxygen) parts.push("oxygen ambulance");
+    if (!parts.length) return;
+    input.value = "My referral letter says: " + parts.join(", ");
+    form.requestSubmit();
+  };
+  referralBox.appendChild(btn);
+}
+const mic = document.getElementById("mic");
+const langSel = document.getElementById("lang");
+const speakBox = document.getElementById("speak");
+
+function speak(text) {
+  if (!speakBox.checked || !("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = langSel.value;
+  const voices = speechSynthesis.getVoices();
+  const voice = voices.find(v => v.lang === langSel.value)
+             || voices.find(v => v.lang.startsWith(langSel.value.slice(0, 2)));
+  if (voice) u.voice = voice;
+  speechSynthesis.speak(u);
+}
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) {
+  mic.disabled = true;
+  mic.title = "Speech recognition isn't supported in this browser. Use Chrome.";
+} else {
+  const rec = new SR();
+  rec.interimResults = true;
+  rec.continuous = false;
+  let listening = false;
+
+  rec.onresult = (e) => {
+    let text = "";
+    for (const r of e.results) text += r[0].transcript;
+    input.value = text;
+    if (e.results[e.results.length - 1].isFinal) form.requestSubmit();
+  };
+  rec.onend = () => { listening = false; mic.textContent = "🎤"; };
+  rec.onerror = (e) => addMessage("Mic problem: " + e.error, "bot");
+
+  mic.onclick = () => {
+    if (listening) { rec.stop(); return; }
+    speechSynthesis.cancel();
+    rec.lang = langSel.value;
+    rec.start();
+    listening = true;
+    mic.textContent = "⏹";
+  };
+}
+</script>
+</body>
+</html>
