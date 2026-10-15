@@ -70,7 +70,6 @@
   </div>
 </div>
 <script>
-const AGENT_URL = new URLSearchParams(location.search).get("v") === "2" ? "/agent2" : "/agent";
 const sessionId = crypto.randomUUID();
 const messages = document.getElementById("messages");
 const form = document.getElementById("form");
@@ -153,16 +152,8 @@ form.addEventListener("submit", async (e) => {
   addMessage(text, "user");
   const bot = addMessage("…", "bot");
 
-  // The hand-written agent still uses /extract; the LangGraph one returns its own details
-  const useGraph = AGENT_URL === "/agent2";
-  const slotsPromise = useGraph
-    ? Promise.resolve(null)
-    : postJSON("/extract", { session_id: sessionId, message: text })
-        .then((r) => r.json())
-        .catch(() => null);
-
   try {
-    const res = await postJSON(AGENT_URL, { session_id: sessionId, message: text });
+    const res = await postJSON("/agent", { session_id: sessionId, message: text });
     const data = await res.json();
     bot.textContent = data.reply;
     if (data.trace_id) addFeedback(bot, data.trace_id);
@@ -172,8 +163,6 @@ form.addEventListener("submit", async (e) => {
     bot.textContent = "Error: " + err.message;
   }
 
-  const slots = await slotsPromise;
-  if (slots) renderDetails(slots);
   send.disabled = false;
   input.focus();
 });

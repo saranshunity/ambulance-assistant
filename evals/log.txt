@@ -1,1 +1,3 @@
 [trial] 3/3 passed | booking 1/1 | guard 1/1 | faq 1/1
+[trial] 3/3 passed | booking 1/1 | guard 1/1 | faq 1/1
+[baseline] 24/25 passed | booking 5/5 | guard 3/3 | emergency 5/5 | faq 5/5 | handoff 3/4 | honesty 3/3

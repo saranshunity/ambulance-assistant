@@ -15,7 +15,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 
 import tools as T
-from agent import SYSTEM, EMERGENCY_BANNER
+from prompts import SYSTEM, EMERGENCY_BANNER
 from faq import search_faq
 
 GRAPH_SYSTEM = SYSTEM + """
